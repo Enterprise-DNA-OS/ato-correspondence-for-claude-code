@@ -1,13 +1,57 @@
 [
   {
-    "name": "week",
-    "title": "This week",
-    "subtitle": "ATO Correspondence for Claude Code: what needs attention, rendered by npm run view",
+    "name": "mailroom",
+    "title": "The mailroom",
+    "subtitle": "ATO Correspondence for Claude Code: the pipeline, the due dates, the variances and the plans. Rendered by npm run view.",
     "sections": [
       {
-        "title": "Needs attention",
-        "note": "TODO(author): point this at the industry's attention view (overdue, stuck, quiet).",
-        "sql": "select 'replace me' as item, 'TODO(author)' as why"
+        "title": "Needs a decision",
+        "note": "Missed due dates, clients not yet told, open variances, unmatched mail, overdue instalments. Worst first.",
+        "sql": "select case reason when 'due_missed' then 'PAYMENT DUE DATE MISSED, client never told' when 'due_soon_unnotified' then 'Payment due soon, client not told' when 'lodgment_overdue' then 'Lodgment OVERDUE' when 'plan_overdue' then 'Payment plan instalment overdue' when 'audit_open' then 'Audit or review letter open' when 'variance_open' then 'Variance undecided' when 'doc_unmatched' then 'Mail matched to nobody' when 'doc_stale' then 'Document going stale' when 'unfiled' then 'Told but never filed' when 'task_overdue' then 'Task overdue' else reason end as what, label as record, client, staff, days, case when amount_cents is not null then to_char(abs(amount_cents) / 100.0, 'FM$999,999,990') else '' end as amount, detail from v_attention order by case reason when 'due_missed' then 1 when 'due_soon_unnotified' then 2 when 'lodgment_overdue' then 3 when 'plan_overdue' then 4 when 'audit_open' then 5 when 'variance_open' then 6 when 'doc_unmatched' then 7 when 'doc_stale' then 8 when 'unfiled' then 9 else 10 end, days desc nulls last"
+      },
+      {
+        "title": "The inbox",
+        "note": "Everything not yet in front of the client, oldest first. Seven days is the standard.",
+        "sql": "select ref, client, doc_type as type, title, case when amount_cents is null then '' when amount_cents < 0 then to_char(abs(amount_cents) / 100.0, 'FM$999,999,990') || ' refund' else to_char(amount_cents / 100.0, 'FM$999,999,990') || ' payable' end as amount, coalesce(to_char(due_on, 'YYYY-MM-DD'), '') as payment_due, status, days_held || 'd' as held, staff from v_inbox"
+      },
+      {
+        "title": "Money due to the ATO, next 30 days",
+        "note": "A NO in the last column inside 14 days is the first thing to fix today.",
+        "sql": "select ref, client, title, to_char(amount_cents / 100.0, 'FM$999,999,990') as amount, to_char(due_on, 'YYYY-MM-DD') as due, case when days_to_due < 0 then abs(days_to_due) || ' days AGO' else days_to_due || ' days' end as countdown, case when client_notified then 'yes' else 'NO' end as client_told from v_due where days_to_due <= 30 order by due_on"
+      },
+      {
+        "title": "Variances: assessed against lodged",
+        "note": "Accept, amend or object. Objection windows are real deadlines (TAA 1953 Part IVC).",
+        "sql": "select ref, client, period, case when expected_cents < 0 then to_char(abs(expected_cents) / 100.0, 'FM$999,999,990') || ' refund' else to_char(expected_cents / 100.0, 'FM$999,999,990') || ' payable' end as we_lodged, case when assessed_cents < 0 then to_char(abs(assessed_cents) / 100.0, 'FM$999,999,990') || ' refund' else to_char(assessed_cents / 100.0, 'FM$999,999,990') || ' payable' end as ato_assessed, to_char(abs(variance_cents) / 100.0, 'FM$999,999,990') as variance, coalesce(days_since_check || 'd', '') as known_for, coalesce(check_note, 'NO EXPLANATION RECORDED') as explanation from v_variances where status in ('checked','notified') order by abs(variance_cents) desc"
+      },
+      {
+        "title": "Payment plans",
+        "note": "One missed instalment defaults an ATO plan, and the general interest charge keeps running.",
+        "sql": "select client, to_char(total_cents / 100.0, 'FM$999,999,990') as total, to_char(instalment_cents / 100.0, 'FM$999,999,990') as instalment, frequency, coalesce(to_char(next_due_on, 'YYYY-MM-DD'), '') as next_due, case when days_to_next < 0 then abs(days_to_next) || ' days OVERDUE' when days_to_next is not null then days_to_next || ' days' else '' end as countdown, to_char(remaining_cents / 100.0, 'FM$999,999,990') as remaining, status from v_payment_plans where status = 'active' order by next_due_on nulls last"
+      }
+    ]
+  },
+  {
+    "name": "season",
+    "title": "The season",
+    "subtitle": "ATO Correspondence for Claude Code: the lodgment calendar, the turnaround and the client positions. Rendered by npm run view.",
+    "sections": [
+      {
+        "title": "Lodgments due and overdue",
+        "sql": "select client, kind, period, to_char(due_on, 'YYYY-MM-DD') as due, case when days_to_due < 0 then abs(days_to_due) || ' days AGO' when days_to_due is not null then days_to_due || ' days' else '' end as countdown, staff, coalesce(note, '') as note from v_lodgments where status = 'due' order by due_on nulls last"
+      },
+      {
+        "title": "Turnaround by staff",
+        "note": "Received to client-notified, in days. The number the incumbent sells back as a dashboard tier.",
+        "sql": "select staff, awaiting_check as to_check, awaiting_letter as to_notify, awaiting_filing as to_file, filed, coalesce(avg_days_to_notify::text, '') as avg_days_to_notify, coalesce(oldest_held_days || 'd', '') as oldest_held from v_workload order by staff"
+      },
+      {
+        "title": "Clients with money ahead of them",
+        "sql": "select client, staff, to_char(payable_ahead_cents / 100.0, 'FM$999,999,990') as payable_ahead, to_char(next_payment_due_on, 'YYYY-MM-DD') as next_due, open_documents as open_docs, case when active_plans > 0 then active_plans || ' plan' else '' end as plans from v_client_position where payable_ahead_cents > 0 order by next_payment_due_on"
+      },
+      {
+        "title": "The register, last 30 days",
+        "sql": "select ref, client, doc_type as type, title, to_char(received_on, 'YYYY-MM-DD') as received, case when amount_cents is null then '' when amount_cents < 0 then to_char(abs(amount_cents) / 100.0, 'FM$999,999,990') || ' refund' else to_char(amount_cents / 100.0, 'FM$999,999,990') || ' payable' end as amount, status, staff from v_register where received_on >= current_date - 30 order by received_on desc"
       }
     ]
   }

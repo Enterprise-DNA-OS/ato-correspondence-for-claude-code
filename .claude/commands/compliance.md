@@ -1,11 +1,10 @@
 ---
-description: Check the records against the rules this industry lives under (the ones listed in docs/compliance.md) and report what is missing, late, or about to breach, with the rule cited.
+description: The rule book run against the records - TFN storage, turnaround, checked-before-told, variances explained, due-date notice, objection windows, payment plans, lodgments - each rule citing its source.
 ---
 
-1. Read `docs/compliance.md`. Each rule has a name, the source it comes from, what a breach looks like in the data, and the SQL or command that finds it.
-2. Run each check. Use the CLI's `--json` output or a direct query through `scripts/lib/db.mjs`.
-3. Report as a table: rule, count, the worst example (name and days), the source. Order by severity: breached first, then due within 7 days, then clean.
-4. For anything breached, draft the fix the operator can approve: the record to update, the notice to send (draft to `drafts/`, never send), or the task to add.
-5. If a rule in `docs/compliance.md` is out of date, say so and stop. Do not guess at law. The operator confirms the rule, then you update the doc and the check together.
+1. Run `npm run ato -- compliance`. Eight rules, each with its source, run against the live records. `compliance <rule>` runs one.
+2. Report breaches worst first, exactly as the command orders them, with the source cited and the named fix beside each one.
+3. For anything breached, draft the fix the operator can approve: the command to run, the letter to draft (to `docs-out/` via `npm run docs`, never sent), or the task to add.
+4. The fuller reading behind each rule is [docs/compliance.md](../../docs/compliance.md). If a rule there looks out of date, say so and stop. Do not guess at law: the operator confirms the rule, then you update the doc and the check together (`/customise` does both).
 
-Nothing here is legal advice. The doc records the rules the operator has told the system to enforce, with sources, and this command checks the data against them.
+Nothing here is tax advice or legal advice. The rules are the ones this practice has told the system to enforce, written down with sources so they can be checked, argued with, and changed.

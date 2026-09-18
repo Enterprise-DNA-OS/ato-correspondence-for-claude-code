@@ -10,3 +10,8 @@ drafts/*
 Thumbs.db
 views/*.html
 docs-out/
+exports/*
+!exports/.gitkeep
+inbox/*
+!inbox/.gitkeep
+!inbox/README.md

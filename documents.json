@@ -1,11 +1,98 @@
 [
   {
-    "name": "example",
-    "title": "TODO(author): the first document this industry must produce",
-    "for_each": "select gen_random_uuid() as id, 'Example' as name",
+    "name": "client-letter-draft",
+    "title": "Client letter (draft)",
+    "for_each": "select r.document_id as id, (r.ref || ' ' || r.client) as name from v_register r where r.status = 'checked' and r.notified_on is null and r.doc_type in ('assessment','statement','instalment','debt','audit','lodgment_demand') order by r.due_on nulls last",
     "file": "name",
     "sections": [
-      { "title": "Details", "sql": "select 'replace me' as item, $1::text as record_id" }
+      {
+        "title": "This is a draft. Nobody has been sent anything.",
+        "note": "Written from the register and the check. Put it on your letterhead, read it against the original document, and send it yourself. Nothing here is tax advice; the letter states what the ATO issued and what was checked.",
+        "sql": "select c.name as addressed_to, coalesce(s.full_name, '') as from_whom, to_char(current_date, 'DD Month YYYY') as dated, d.ref as our_reference from documents d join clients c on c.id = d.client_id left join staff s on s.id = d.staff_id where d.id = $1"
+      },
+      {
+        "title": "The document",
+        "sql": "select d.title as what_the_ato_issued, coalesce(d.period, '') as period, case when d.amount_cents is null then 'no amount on the document' when d.amount_cents < 0 then 'refund of ' || to_char(abs(d.amount_cents) / 100.0, 'FM$999,999,990.00') else to_char(d.amount_cents / 100.0, 'FM$999,999,990.00') || ' payable to the ATO' end as result, coalesce(to_char(d.due_on, 'DD Month YYYY'), 'no payment due date') as payment_due, coalesce(to_char(d.issued_on, 'DD Month YYYY'), '') as ato_issue_date from documents d where d.id = $1"
+      },
+      {
+        "title": "Against the return as lodged",
+        "note": "Empty when the document was checked against records held outside this system; the check note below still applies.",
+        "sql": "select case when l.expected_cents < 0 then 'refund of ' || to_char(abs(l.expected_cents) / 100.0, 'FM$999,999,990.00') else to_char(l.expected_cents / 100.0, 'FM$999,999,990.00') || ' payable' end as we_lodged, case when d.amount_cents < 0 then 'refund of ' || to_char(abs(d.amount_cents) / 100.0, 'FM$999,999,990.00') else to_char(d.amount_cents / 100.0, 'FM$999,999,990.00') || ' payable' end as the_ato_assessed, case when d.amount_cents = l.expected_cents then 'matches the return as lodged' else to_char(abs(d.amount_cents - l.expected_cents) / 100.0, 'FM$999,999,990.00') || case when d.amount_cents > l.expected_cents then ' more than expected' else ' better than expected' end end as position from documents d join lodgments l on l.id = d.lodgment_id where d.id = $1 and d.amount_cents is not null and l.expected_cents is not null"
+      },
+      {
+        "title": "The check",
+        "sql": "select to_char(d.checked_on, 'DD Month YYYY') as checked_on, coalesce(d.check_note, 'NO NOTE RECORDED: record the explanation before this letter goes anywhere') as what_the_check_found from documents d where d.id = $1"
+      }
+    ]
+  },
+  {
+    "name": "payment-plan-schedule",
+    "title": "Payment plan schedule",
+    "for_each": "select p.id, (c.name || ' payment plan') as name from payment_plans p join clients c on c.id = p.client_id where p.status = 'active' order by c.name",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The plan",
+        "note": "A statement of the arrangement as recorded here. The ATO's own confirmation letter is the authority; this page keeps everyone honest about the next date.",
+        "sql": "select c.name as client, to_char(p.started_on, 'DD Month YYYY') as started, to_char(p.total_cents / 100.0, 'FM$999,999,990.00') as total, to_char(p.instalment_cents / 100.0, 'FM$999,999,990.00') || ' ' || p.frequency as instalment, coalesce(to_char(p.next_due_on, 'DD Month YYYY'), '') as next_instalment_due, to_char(p.remaining_cents / 100.0, 'FM$999,999,990.00') as remaining, ceil(p.remaining_cents::numeric / p.instalment_cents) || ' instalments to go' as remaining_instalments from payment_plans p join clients c on c.id = p.client_id where p.id = $1"
+      },
+      {
+        "title": "The standing warning",
+        "sql": "select 'One missed instalment can default the plan. The whole balance falls due and the general interest charge has been running the entire time.' as keep_in_mind from payment_plans p where p.id = $1"
+      }
+    ]
+  },
+  {
+    "name": "staff-day-report",
+    "title": "Staff day report",
+    "for_each": "select s.id, s.full_name as name from staff s where s.active order by s.full_name",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The person",
+        "sql": "select s.full_name as staff, s.role, to_char(current_date, 'DD Month YYYY') as prepared_on, (select count(*) from documents d where d.staff_id = s.id and d.status in ('received','matched','checked','notified')) as open_documents from staff s where s.id = $1"
+      },
+      {
+        "title": "Their pipeline",
+        "sql": "select r.ref, r.client, r.doc_type as type, r.title, r.status, r.days_held || 'd' as held, case when r.amount_cents is null then '' when r.amount_cents < 0 then to_char(abs(r.amount_cents) / 100.0, 'FM$999,999,990') || ' refund' else to_char(r.amount_cents / 100.0, 'FM$999,999,990') || ' payable' end as amount, coalesce(to_char(r.due_on, 'YYYY-MM-DD'), '') as payment_due from v_register r join staff s on s.full_name = r.staff where s.id = $1 and r.status in ('received','matched','checked','notified') order by r.received_on"
+      },
+      {
+        "title": "Their clients' money due, next 30 days",
+        "sql": "select d.ref, d.client, to_char(d.amount_cents / 100.0, 'FM$999,999,990') as amount, to_char(d.due_on, 'YYYY-MM-DD') as due, case when d.client_notified then 'yes' else 'NO' end as client_told from v_due d join staff s on s.full_name = d.staff where s.id = $1 and d.days_to_due between -7 and 30 order by d.due_on"
+      },
+      {
+        "title": "Their open tasks",
+        "sql": "select t.title, coalesce(c.name, '') as client, coalesce(to_char(t.due_on, 'YYYY-MM-DD'), '') as due from tasks t left join clients c on c.id = t.client_id where t.staff_id = $1 and t.status = 'open' order by t.due_on nulls last"
+      }
+    ]
+  },
+  {
+    "name": "client-season-report",
+    "title": "Client ATO position",
+    "for_each": "select c.id, c.name from clients c where c.status = 'active' and exists (select 1 from documents d where d.client_id = c.id and d.status in ('received','matched','checked','notified')) order by c.name",
+    "file": "name",
+    "sections": [
+      {
+        "title": "The client",
+        "note": "One page of where this client stands with the ATO, from the register. Read it before the phone call.",
+        "sql": "select c.name as client, c.client_type as type, coalesce(c.group_name, '') as family_group, coalesce(s.full_name, '') as accountant, to_char(current_date, 'DD Month YYYY') as prepared_on from clients c left join staff s on s.id = c.staff_id where c.id = $1"
+      },
+      {
+        "title": "Open correspondence",
+        "sql": "select r.ref, r.doc_type as type, r.title, to_char(r.received_on, 'YYYY-MM-DD') as received, case when r.amount_cents is null then '' when r.amount_cents < 0 then to_char(abs(r.amount_cents) / 100.0, 'FM$999,999,990') || ' refund' else to_char(r.amount_cents / 100.0, 'FM$999,999,990') || ' payable' end as amount, coalesce(to_char(r.due_on, 'YYYY-MM-DD'), '') as payment_due, r.status from v_register r where r.client_id = $1 and r.status in ('received','matched','checked','notified') order by r.received_on"
+      },
+      {
+        "title": "Lodgments",
+        "sql": "select l.kind, l.period, coalesce(to_char(l.due_on, 'YYYY-MM-DD'), '') as due, coalesce(to_char(l.lodged_on, 'YYYY-MM-DD'), '') as lodged, l.status from lodgments l where l.client_id = $1 order by l.due_on desc nulls last limit 8"
+      },
+      {
+        "title": "Payment plans",
+        "sql": "select to_char(p.started_on, 'YYYY-MM-DD') as started, to_char(p.instalment_cents / 100.0, 'FM$999,999,990') || ' ' || p.frequency as instalment, coalesce(to_char(p.next_due_on, 'YYYY-MM-DD'), '') as next_due, to_char(p.remaining_cents / 100.0, 'FM$999,999,990') as remaining, p.status from payment_plans p where p.client_id = $1 order by p.started_on desc"
+      },
+      {
+        "title": "Recent contact",
+        "sql": "select to_char(n.noted_on, 'YYYY-MM-DD') as date, n.channel, n.note from client_notes n where n.client_id = $1 order by n.noted_on desc limit 8"
+      }
     ]
   }
 ]
